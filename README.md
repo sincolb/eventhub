@@ -7,8 +7,8 @@ defer eventHubTable.Stop()
 
 done := make(chan struct{})
 go func() {
-	done <- struct{}{}
 	eventHubTable.Distribute("eventNname", time.Second*10, "event data")
+	done <- struct{}{}
 }()
 <-done
 got, err := eventHubTable.Subscribe("eventNname", time.Millisecond*100)
