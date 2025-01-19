@@ -19,11 +19,18 @@ OR
 hub := eventhub.NewEventHub()
 defer hub.Close()
 
+var wg sync.WaitGroup
+wg.Add(1)
+go func() {
+	defer wg.Done()
+	got, err = hub.Subscribe(time.Millisecond * 10)
+	fmt.Println(got, err)
+
+}()
 hub.Publish(&struct {
 	Name string
 }{
 	Name: "title",
 })
-got, err = hub.Subscribe(time.Millisecond * 100)
-fmt.Println(got, err)
+wg.Wait()
 ```
