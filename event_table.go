@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,11 @@ func NewEventHubTable[T comparable]() *EventHubTable[T] {
 
 func (table *EventHubTable[T]) Subscribe(name T, timeout time.Duration,
 	size ...int) (any, error) {
+	return table.SubscribeWithContext(context.Background(), name, timeout, size...)
+}
+
+func (table *EventHubTable[T]) SubscribeWithContext(ctx context.Context, name T, timeout time.Duration,
+	size ...int) (any, error) {
 	if table.closed() {
 		return nil, ErrEventHubTableClosed
 	}
@@ -38,7 +44,7 @@ func (table *EventHubTable[T]) Subscribe(name T, timeout time.Duration,
 		table.mu.Unlock()
 	}
 
-	return hub.Subscribe(timeout)
+	return hub.SubscribeWithContext(ctx, timeout)
 }
 
 func (table *EventHubTable[T]) UnSubscribe(name T) {
