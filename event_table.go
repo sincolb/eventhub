@@ -61,16 +61,11 @@ func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 		return ErrEventHubChanClosed
 	}
 
-	payload := &eventPayload{
-		payload:  data,
-		life:     life,
-		lastTime: time.Now(),
-	}
 	table.mu.RLock()
 	hub, ok := table.subscriptions[name]
 	table.mu.RUnlock()
 	if ok {
-		return hub.Publish(payload)
+		return hub.Publish(data, life)
 	}
 
 	option := buildEventHubTableOptions(opts...)
@@ -78,7 +73,7 @@ func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 		table.mu.Lock()
 		table.subscriptions[name] = NewEventHub()
 		table.mu.Unlock()
-		return table.subscriptions[name].Publish(payload)
+		return table.subscriptions[name].Publish(data, life)
 	}
 
 	return ErrEventHubNotSubscribed
