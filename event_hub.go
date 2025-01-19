@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -60,6 +61,10 @@ func (hub *EventHub) start() {
 }
 
 func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
+	return hub.SubscribeWithContext(context.Background(), timeout)
+}
+
+func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Duration) (any, error) {
 	if hub.Closed() {
 		return nil, ErrEventHubClosed
 	}
@@ -92,6 +97,8 @@ func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
 		return nil, ErrEventHubTimeout
 	case <-hub.done:
 		return nil, ErrEventHubClosed
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -111,12 +118,12 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	if len(life) > 0 {
 		lifeTime = life[0]
 	}
+
 	payload := &eventPayload{
 		payload:  data,
 		life:     lifeTime,
 		lastTime: time.Now(),
 	}
-	// fmt.Println(payload)
 
 	select {
 	case hub.eventChan <- data:
