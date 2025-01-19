@@ -66,7 +66,7 @@ func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
 
 	hub.mu.RLock()
 	if hub.data != nil {
-		if data, ok := hub.data.Payload(); ok != nil {
+		if data, ok := hub.data.Payload(); ok {
 			defer hub.mu.RUnlock()
 			return data, nil
 		}
@@ -116,6 +116,7 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 		life:     lifeTime,
 		lastTime: time.Now(),
 	}
+	// fmt.Println(payload)
 
 	select {
 	case hub.eventChan <- data:

@@ -1,6 +1,8 @@
 package eventhub
 
-import "time"
+import (
+	"time"
+)
 
 type eventPayload struct {
 	payload  any
