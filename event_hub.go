@@ -66,7 +66,7 @@ func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
 
 	hub.mu.RLock()
 	if hub.data != nil {
-		if data, ok := hub.data.Payload(); ok {
+		if data, ok := hub.data.Payload(); ok != nil {
 			defer hub.mu.RUnlock()
 			return data, nil
 		}
@@ -102,13 +102,23 @@ func (hub *EventHub) UnSubscribe(ch chan any) {
 	delete(hub.subscribers, ch)
 }
 
-func (hub *EventHub) Publish(data *eventPayload) error {
+func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	if hub.Closed() {
 		return ErrEventHubClosed
 	}
 
+	var lifeTime time.Duration
+	if len(life) > 0 {
+		lifeTime = life[0]
+	}
+	payload := &eventPayload{
+		payload:  data,
+		life:     lifeTime,
+		lastTime: time.Now(),
+	}
+
 	select {
-	case hub.eventChan <- data.payload:
+	case hub.eventChan <- data:
 	case <-hub.done:
 		hub.drain()
 		return ErrEventHubClosed
@@ -116,7 +126,7 @@ func (hub *EventHub) Publish(data *eventPayload) error {
 	}
 
 	hub.mu.Lock()
-	hub.data = data
+	hub.data = payload
 	hub.mu.Unlock()
 	return nil
 }
