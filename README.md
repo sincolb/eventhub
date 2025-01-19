@@ -20,6 +20,7 @@ OR
 ```
 hub := eventhub.NewEventHub()
 defer hub.Close()
+
 hub.Publish(&struct {
 	Name string
 }{
