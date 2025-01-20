@@ -1,5 +1,5 @@
 # eventhub
-A stand-alone version of the event subscription component, which accepts results only once, supports timeout waits, and context
+A stand-alone version of the event subscription component that can accept multiple or one results, and supports timeouts and contexts.
 
 ```
 eventHubTable := eventhub.NewEventHubTable[string]()
