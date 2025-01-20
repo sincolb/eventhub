@@ -34,3 +34,18 @@ got, err := hub.Subscribe(time.Millisecond * 10)
 fmt.Println(got, err)
 wg.Wait()
 ```
+OR
+```
+hub := NewEventHub()
+defer hub.Close()
+
+go func() {
+	for i := 0; i < 5; i++ {
+		hub.Publish(i, 0)
+		// simulates latency into the eventhub
+		time.Sleep(time.Millisecond * 10)
+	}
+}()
+res, err := hub.Subscribes(time.Millisecond*100, 4)
+fmt.Println(res, err)
+```
