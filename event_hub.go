@@ -12,11 +12,14 @@ type EventHub struct {
 	subscribers map[chan any]struct{}
 	eventChan   chan any
 	done        chan struct{}
-	data        *eventPayload
+	last        *eventPayload
+	cond        *sync.Cond
+	list        *Ring
 
-	once   sync.Once
-	mu     sync.RWMutex
-	closed int32
+	once     sync.Once
+	mu       sync.RWMutex
+	capacity int
+	closed   int32
 }
 
 func NewEventHub(size ...int) *EventHub {
@@ -28,7 +31,10 @@ func NewEventHub(size ...int) *EventHub {
 	if len(size) > 0 {
 		capacity = size[0]
 	}
+	hub.capacity = capacity
 	hub.eventChan = make(chan any, capacity)
+	hub.list = NewRing(capacity)
+	hub.cond = sync.NewCond(&sync.Mutex{})
 	go hub.start()
 	return hub
 }
@@ -70,8 +76,8 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 	}
 
 	hub.mu.RLock()
-	if hub.data != nil {
-		if data, ok := hub.data.Payload(); ok {
+	if hub.last != nil {
+		if data, ok := hub.last.Payload(); ok {
 			defer hub.mu.RUnlock()
 			return data, nil
 		}
@@ -100,6 +106,63 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (hub *EventHub) Subscribes(timeout time.Duration, size int) ([]any, error) {
+	return hub.SubscribesWithContext(context.Background(), timeout, size)
+}
+
+func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Duration,
+	size int) ([]any, error) {
+	if hub.Closed() {
+		return nil, ErrEventHubClosed
+	}
+
+	capacity := size
+	if size > hub.capacity {
+		capacity = hub.capacity
+	}
+	ready := make(chan struct{})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	go func() {
+		hub.cond.L.Lock()
+		defer func() {
+			hub.cond.L.Unlock()
+			close(ready)
+		}()
+		for hub.list.Len() < capacity {
+			hub.cond.Wait()
+		}
+	}()
+
+	select {
+	case <-ready:
+		hub.mu.RLock()
+		elements := make([]any, capacity)
+		list := hub.list.Take()
+		for i := 0; i < len(list); i++ {
+			if i+1 > capacity {
+				break
+			}
+			elements[i] = list[i]
+		}
+		hub.mu.RUnlock()
+		return elements, nil
+	case <-timer.C:
+		return hub.down(ErrEventHubTimeout)
+	case <-hub.done:
+		return hub.down(ErrEventHubClosed)
+	case <-ctx.Done():
+		return hub.down(ctx.Err())
+	}
+}
+
+func (hub *EventHub) down(err error) ([]any, error) {
+	defer hub.cond.Signal()
+
+	return nil, err
 }
 
 func (hub *EventHub) UnSubscribe(ch chan any) {
@@ -134,15 +197,22 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	}
 
 	hub.mu.Lock()
-	hub.data = payload
+	hub.last = payload
+	hub.list.Add(data)
 	hub.mu.Unlock()
+
+	hub.cond.L.Lock()
+	hub.cond.Signal()
+	hub.cond.L.Unlock()
+
 	return nil
 }
 
 func (hub *EventHub) Close() {
 	hub.once.Do(func() {
 		hub.closed = 1
-		hub.data = nil
+		hub.last = nil
+		hub.list = nil
 		hub.subscribers = make(map[chan any]struct{})
 		close(hub.done)
 	})

@@ -26,6 +26,28 @@ func (table *EventHubTable[T]) Subscribe(name T, timeout time.Duration,
 
 func (table *EventHubTable[T]) SubscribeWithContext(ctx context.Context, name T, timeout time.Duration,
 	size ...int) (any, error) {
+	hub, err := table.acquireHub(name, size...)
+	if err != nil {
+		return nil, err
+	}
+
+	return hub.SubscribeWithContext(ctx, timeout)
+}
+
+func (table *EventHubTable[T]) Subscribes(name T, timeout time.Duration, size int) ([]any, error) {
+	return table.SubscribesWithContext(context.Background(), name, timeout, size)
+}
+
+func (table *EventHubTable[T]) SubscribesWithContext(ctx context.Context, name T, timeout time.Duration, size int) ([]any, error) {
+	hub, err := table.acquireHub(name, size)
+	if err != nil {
+		return nil, err
+	}
+
+	return hub.SubscribesWithContext(ctx, timeout, size)
+}
+
+func (table *EventHubTable[T]) acquireHub(name T, size ...int) (*EventHub, error) {
 	if table.closed() {
 		return nil, ErrEventHubTableClosed
 	}
@@ -43,8 +65,7 @@ func (table *EventHubTable[T]) SubscribeWithContext(ctx context.Context, name T,
 		}
 		table.mu.Unlock()
 	}
-
-	return hub.SubscribeWithContext(ctx, timeout)
+	return hub, nil
 }
 
 func (table *EventHubTable[T]) UnSubscribe(name T) {
