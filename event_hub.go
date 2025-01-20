@@ -117,9 +117,8 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 		return nil, ErrEventHubClosed
 	}
 
-	capacity := size
-	if size > hub.capacity {
-		capacity = hub.capacity
+	if size <= 0 || size > hub.capacity {
+		size = hub.capacity
 	}
 	canceled, down := hub.down()
 	ready := make(chan struct{})
@@ -132,7 +131,7 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 			hub.cond.L.Unlock()
 			close(ready)
 		}()
-		for !*canceled && hub.list.Len() < capacity {
+		for !*canceled && hub.list.Len() < size {
 			hub.cond.Wait()
 		}
 	}()

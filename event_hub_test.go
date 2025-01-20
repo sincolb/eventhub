@@ -72,7 +72,7 @@ func TestSubscirbsContextCancel(t *testing.T) {
 			}
 		}()
 
-		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 4)
+		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 11)
 		assert.Equal(t, context.Canceled, err)
 		assert.Nil(t, res)
 		wg.Wait()
@@ -126,9 +126,6 @@ func TestSubscirbsShutdown(t *testing.T) {
 		res, err := hub.Subscribe(time.Millisecond * 100)
 		assert.Nil(t, err)
 		assert.NotNil(t, res)
-		// res, err = hub.Subscribes(time.Millisecond*100, 11)
-		// assert.Equal(t, ErrEventHubClosed, err)
-		// assert.Nil(t, res)
 		wg.Wait()
 	})
 }
