@@ -30,7 +30,7 @@ go func() {
 		Name: "title",
 	})
 }()
-got, err = hub.Subscribe(time.Millisecond * 10)
+got, err := hub.Subscribe(time.Millisecond * 10)
 fmt.Println(got, err)
 wg.Wait()
 ```
