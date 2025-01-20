@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -38,7 +39,7 @@ func (r *Ring) Add(v any) {
 }
 
 // Take takes all items from r.
-func (r *Ring) Take() []any {
+func (r *Ring) Take(n ...int) []any {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
@@ -53,24 +54,51 @@ func (r *Ring) Take() []any {
 		size = r.index
 	}
 
-	elements := make([]any, size)
-	for i := 0; i < size; i++ {
-		elements[i] = r.elements[(start+i)%rlen]
+	num := size
+	if len(n) > 0 && n[0] > 0 && n[0] <= size {
+		num = n[0]
+	}
+	elements := make([]any, num)
+	switch num {
+	case 1:
+		fmt.Println(111)
+		elements[0] = r.elements[(start+size-1)%rlen]
+	case size:
+		fmt.Println("size=", size)
+		for i := 0; i < size; i++ {
+			elements[i] = r.elements[(start+i)%rlen]
+		}
+	default:
+		fmt.Println("num=", num)
+		j := 0
+		for i := num - 1; i >= 0; i-- {
+			elements[j] = r.elements[(start+i)%rlen]
+			j++
+		}
+	}
+	fmt.Println("elements=", elements)
+	return elements
+}
+
+func (r *Ring) Pop() any {
+	if elements := r.Take(1); len(elements) > 0 {
+		return elements[0]
 	}
 
-	return elements
+	return nil
 }
 
 // Take get size from r.
 func (r *Ring) Len() int {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
-	n := 0
-	for i := 0; i < len(r.elements); i++ {
-		if r.elements[i] != nil {
-			n++
-		}
+
+	size, rlen := 0, len(r.elements)
+	if r.index > rlen {
+		size = rlen
+	} else {
+		size = r.index
 	}
 
-	return n
+	return size
 }

@@ -98,7 +98,11 @@ func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 	option := buildEventHubTableOptions(opts...)
 	if option.autoCommit {
 		table.mu.Lock()
-		table.subscriptions[name] = NewEventHub()
+		if option.capacity == nil {
+			table.subscriptions[name] = NewEventHub()
+		} else {
+			table.subscriptions[name] = NewEventHub(*option.capacity)
+		}
 		table.mu.Unlock()
 		return table.subscriptions[name].Publish(data, life)
 	}
