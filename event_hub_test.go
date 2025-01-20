@@ -48,7 +48,7 @@ func TestSubscirbsTimeout(t *testing.T) {
 			}
 		}()
 		res, err := hub.Subscribes(time.Millisecond*100, 4)
-		assert.Equal(t, err, ErrEventHubTimeout)
+		assert.Equal(t, ErrEventHubTimeout, err)
 		assert.Nil(t, res)
 		wg.Wait()
 	})
@@ -73,8 +73,62 @@ func TestSubscirbsContextCancel(t *testing.T) {
 		}()
 
 		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 4)
-		assert.Equal(t, err, context.Canceled)
+		assert.Equal(t, context.Canceled, err)
 		assert.Nil(t, res)
+		wg.Wait()
+	})
+}
+
+func TestSubscirbsClose(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		hub := NewEventHub()
+		defer hub.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// close immediately
+			hub.Close()
+			hub.Publish(1)
+		}()
+
+		res, err := hub.Subscribe(time.Millisecond * 100)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.Subscribes(time.Millisecond*100, 11)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		wg.Wait()
+	})
+}
+
+func TestSubscirbsShutdown(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		hub := NewEventHub()
+		defer hub.Close()
+
+		const parallel = 10
+		var wg sync.WaitGroup
+		for i := 0; i < parallel; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				hub.Publish(i)
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hub.Close()
+		}()
+
+		res, err := hub.Subscribe(time.Millisecond * 100)
+		assert.Nil(t, err)
+		assert.NotNil(t, res)
+		// res, err = hub.Subscribes(time.Millisecond*100, 11)
+		// assert.Equal(t, ErrEventHubClosed, err)
+		// assert.Nil(t, res)
 		wg.Wait()
 	})
 }

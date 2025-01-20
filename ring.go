@@ -1,7 +1,6 @@
 package eventhub
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -61,26 +60,23 @@ func (r *Ring) Take(n ...int) []any {
 	elements := make([]any, num)
 	switch num {
 	case 1:
-		fmt.Println(111)
 		elements[0] = r.elements[(start+size-1)%rlen]
 	case size:
-		fmt.Println("size=", size)
 		for i := 0; i < size; i++ {
 			elements[i] = r.elements[(start+i)%rlen]
 		}
 	default:
-		fmt.Println("num=", num)
 		j := 0
 		for i := num - 1; i >= 0; i-- {
 			elements[j] = r.elements[(start+i)%rlen]
 			j++
 		}
 	}
-	fmt.Println("elements=", elements)
+
 	return elements
 }
 
-func (r *Ring) Pop() any {
+func (r *Ring) Latest() any {
 	if elements := r.Take(1); len(elements) > 0 {
 		return elements[0]
 	}
