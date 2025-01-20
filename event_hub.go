@@ -180,25 +180,19 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	default:
 	}
 
-	select {
-	case <-hub.done:
-		hub.drain()
-		return ErrEventHubClosed
-	default:
-		hub.mu.Lock()
-		if hub.list != nil {
-			payload := &eventPayload{
-				payload:  data,
-				life:     lifeTime,
-				lastTime: time.Now(),
-			}
-			hub.list.Add(payload)
+	hub.mu.Lock()
+	if hub.list != nil {
+		payload := &eventPayload{
+			payload:  data,
+			life:     lifeTime,
+			lastTime: time.Now(),
 		}
-		hub.mu.Unlock()
-		hub.cond.L.Lock()
-		hub.cond.Signal()
-		hub.cond.L.Unlock()
+		hub.list.Add(payload)
 	}
+	hub.mu.Unlock()
+	hub.cond.L.Lock()
+	hub.cond.Signal()
+	hub.cond.L.Unlock()
 
 	return nil
 }
