@@ -15,7 +15,7 @@ go func() {
 }()
 <-done
 ```
-OR
+## Subscribe only once
 ```
 hub := eventhub.NewEventHub()
 defer hub.Close()
@@ -34,7 +34,7 @@ got, err := hub.Subscribe(time.Millisecond * 10)
 fmt.Println(got, err)
 wg.Wait()
 ```
-OR
+## Subscribes for multiple
 ```
 hub := NewEventHub()
 defer hub.Close()
