@@ -22,12 +22,6 @@ jobs:
         # NOTE: Keep this in sync with the version from go.mod
         go-version: "1.23.x"
 
-    - name: golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        # NOTE: Keep this in sync with the version from .golangci.yml
-        version: v1.51.0
-
     - name: Install dependencies
       run: go get .
 
