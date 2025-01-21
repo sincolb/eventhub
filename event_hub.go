@@ -105,6 +105,7 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 	case <-hub.done:
 		return nil, ErrEventHubClosed
 	case <-ctx.Done():
+		hub.UnSubscribe(ch)
 		return nil, ctx.Err()
 	}
 }
@@ -202,9 +203,8 @@ func (hub *EventHub) Close() {
 		return
 	}
 
-	hub.subscribers.Clear()
-
 	hub.mu.Lock()
+	hub.subscribers.Clear()
 	hub.closed = 1
 	hub.list = nil
 	close(hub.done)

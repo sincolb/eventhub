@@ -79,30 +79,55 @@ func TestSubscirbsContextCancel(t *testing.T) {
 
 func TestSubscirbsClose(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		hub := NewEventHub()
-		defer hub.Close()
+		t.Run("close immediately", func(t *testing.T) {
+			hub := NewEventHub()
+			defer hub.Close()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				// close immediately
+				hub.Close()
+				hub.Publish(1)
+			}()
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// close immediately
-			hub.Close()
-			hub.Publish(1)
-		}()
-
-		res, err := hub.Subscribe(time.Millisecond * 100)
-		assert.Equal(t, ErrEventHubClosed, err)
-		assert.Nil(t, res)
-		res, err = hub.Subscribes(time.Millisecond*100, 11)
-		assert.Equal(t, ErrEventHubClosed, err)
-		assert.Nil(t, res)
-		res, err = hub.SubscribeWithContext(context.Background(), 0)
-		assert.Equal(t, ErrEventHubClosed, err)
-		assert.Nil(t, res)
-		res, err = hub.SubscribesWithContext(context.Background(), 0, 1)
-		assert.Equal(t, ErrEventHubClosed, err)
-		assert.Nil(t, res)
-		wg.Wait()
+			res, err := hub.Subscribe(time.Millisecond * 100)
+			assert.Equal(t, ErrEventHubClosed, err)
+			assert.Nil(t, res)
+			res, err = hub.Subscribes(time.Millisecond*100, 11)
+			assert.Equal(t, ErrEventHubClosed, err)
+			assert.Nil(t, res)
+			res, err = hub.SubscribeWithContext(context.Background(), 0)
+			assert.Equal(t, ErrEventHubClosed, err)
+			assert.Nil(t, res)
+			res, err = hub.SubscribesWithContext(context.Background(), 0, 1)
+			assert.Equal(t, ErrEventHubClosed, err)
+			assert.Nil(t, res)
+			wg.Wait()
+		})
+		t.Run("close at running ", func(t *testing.T) {
+			hub := NewEventHub()
+			defer hub.Close()
+			var wg sync.WaitGroup
+			wg.Add(3)
+			go func() {
+				defer wg.Done()
+				time.Sleep(time.Millisecond * 3)
+				hub.Close()
+			}()
+			go func() {
+				defer wg.Done()
+				res, err := hub.SubscribeWithContext(context.Background(), time.Millisecond*100)
+				assert.Equal(t, ErrEventHubClosed, err)
+				assert.Nil(t, res)
+			}()
+			go func() {
+				defer wg.Done()
+				res, err := hub.SubscribesWithContext(context.Background(), time.Millisecond*100, 1)
+				assert.Equal(t, ErrEventHubClosed, err)
+				assert.Nil(t, res)
+			}()
+			wg.Wait()
+		})
 	})
 }
