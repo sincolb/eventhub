@@ -1,6 +1,11 @@
 # eventhub
 A stand-alone version of the event subscription component that can accept multiple or one results, and supports timeouts and contexts.
 
+## Install
+```
+go get github.com/sincolb/eventhub
+```
+## Usage
 ```
 eventHubTable := eventhub.NewEventHubTable[string]()
 defer eventHubTable.Stop()
