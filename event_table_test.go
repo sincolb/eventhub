@@ -221,6 +221,25 @@ func TestStop(t *testing.T) {
 	})
 }
 
+func TestClose(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		eventHubTable := NewEventHubTable[string]()
+		// stop immediately
+		eventHubTable.Stop()
+		eventHubTable.Stop()
+		eventHubTable.UnSubscribe("name")
+
+		err := eventHubTable.Distribute("name", 0, nil)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		res, err := eventHubTable.Subscribe("name", time.Millisecond*100)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		assert.Nil(t, res)
+		res, err = eventHubTable.Subscribes("name", time.Millisecond*100, 11)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		assert.Nil(t, res)
+	})
+}
+
 func TestDistributeLifeTime(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
 		eventHubTable := NewEventHubTable[string]()

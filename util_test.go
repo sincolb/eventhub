@@ -32,7 +32,6 @@ func TestSubscribeEventWrapper(t *testing.T) {
 func TestSubscribeEventWrapperFail(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
 		table := NewEventHubTable[string]()
-		defer table.Stop()
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -42,9 +41,14 @@ func TestSubscribeEventWrapperFail(t *testing.T) {
 		}()
 		wg.Wait()
 
-		res, err := SubscribeEventWrapper[int](table, "name", time.Millisecond*10)
 		r := require.New(t)
+		res, err := SubscribeEventWrapper[int](table, "name", time.Millisecond*10)
 		r.Equal(0, res)
 		r.Error(err)
+
+		table.Stop()
+		res, err = SubscribeEventWrapper[int](table, "name", time.Millisecond*10)
+		r.Equal(ErrEventHubTableClosed, err)
+		r.Equal(0, res)
 	})
 }

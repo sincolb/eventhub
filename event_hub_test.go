@@ -12,7 +12,7 @@ import (
 
 func TestSubscirbs(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		hub := NewEventHub()
+		hub := NewEventHub(4)
 		defer hub.Close()
 
 		var wg sync.WaitGroup
@@ -21,14 +21,12 @@ func TestSubscirbs(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 5; i++ {
 				hub.Publish(i, 0)
-				// simulates latency into the eventhub
-				time.Sleep(time.Millisecond * 10)
 			}
 		}()
-		res, err := hub.Subscribes(time.Millisecond*100, 4)
-		require.NoError(t, err)
-		require.ElementsMatch(t, []int{3, 2, 1, 0}, res)
 		wg.Wait()
+		res, err := hub.Subscribes(time.Millisecond*100, 3)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []int{3, 2, 1}, res)
 	})
 }
 
@@ -97,6 +95,12 @@ func TestSubscirbsClose(t *testing.T) {
 		assert.Equal(t, ErrEventHubClosed, err)
 		assert.Nil(t, res)
 		res, err = hub.Subscribes(time.Millisecond*100, 11)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.SubscribeWithContext(context.Background(), 0)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.SubscribesWithContext(context.Background(), 0, 1)
 		assert.Equal(t, ErrEventHubClosed, err)
 		assert.Nil(t, res)
 		wg.Wait()

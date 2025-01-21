@@ -85,7 +85,7 @@ func (table *EventHubTable[T]) UnSubscribe(name T) {
 func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 	opts ...eventHubTableOption) error {
 	if table.closed() {
-		return ErrEventHubChanClosed
+		return ErrEventHubTableClosed
 	}
 
 	table.mu.RLock()
