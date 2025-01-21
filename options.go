@@ -2,6 +2,7 @@ package eventhub
 
 type (
 	eventHubTableOptions struct {
+		capacity   *int
 		autoCommit bool
 	}
 
@@ -22,5 +23,12 @@ func buildEventHubTableOptions(opts ...eventHubTableOption) *eventHubTableOption
 func WithEventHubTableAutoCommit(auto bool) eventHubTableOption {
 	return func(opts *eventHubTableOptions) {
 		opts.autoCommit = auto
+	}
+}
+
+func WithEventHubCapacity(size int) eventHubTableOption {
+	return func(opts *eventHubTableOptions) {
+		capacity := size
+		opts.capacity = &capacity
 	}
 }

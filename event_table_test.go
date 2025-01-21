@@ -1,7 +1,6 @@
 package eventhub
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -99,7 +98,6 @@ func TestMultiSubscribe(t *testing.T) {
 			time.AfterFunc(time.Millisecond*10, func() {
 				defer wg.Done()
 				got, err := eventHubTable.Subscribe("after", time.Millisecond*20)
-				fmt.Println(got, err)
 				assert.Nil(t, err)
 				assert.Equal(t, "after", got)
 			})
@@ -123,6 +121,7 @@ func TestDistribute(t *testing.T) {
 		assert.Nil(t, err)
 	})
 }
+
 func TestMultiDistribute(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
 		eventHubTable := NewEventHubTable[string]()
@@ -132,7 +131,7 @@ func TestMultiDistribute(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			eventHubTable.Distribute("name", time.Second, "payload")
+			eventHubTable.Distribute("name", time.Second, "payload", WithEventHubCapacity(10))
 			eventHubTable.Distribute("name", time.Second, "payload new")
 		}()
 		wg.Wait()
@@ -220,6 +219,25 @@ func TestStop(t *testing.T) {
 	})
 }
 
+func TestClose(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		eventHubTable := NewEventHubTable[string]()
+		// stop immediately
+		eventHubTable.Stop()
+		eventHubTable.Stop()
+		eventHubTable.UnSubscribe("name")
+
+		err := eventHubTable.Distribute("name", 0, nil)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		res, err := eventHubTable.Subscribe("name", time.Millisecond*100)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		assert.Nil(t, res)
+		res, err = eventHubTable.Subscribes("name", time.Millisecond*100, 11)
+		assert.Equal(t, ErrEventHubTableClosed, err)
+		assert.Nil(t, res)
+	})
+}
+
 func TestDistributeLifeTime(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
 		eventHubTable := NewEventHubTable[string]()
@@ -236,6 +254,28 @@ func TestDistributeLifeTime(t *testing.T) {
 		got, err = eventHubTable.Subscribe("name", time.Millisecond*10)
 		assert.Nil(t, got)
 		assert.Equal(t, ErrEventHubTimeout, err)
+	})
+}
+
+func TestEventTableSubscirbs(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		eventHubTable := NewEventHubTable[string]()
+		defer eventHubTable.Stop()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 5; i++ {
+				eventHubTable.Distribute("name", 0, i)
+				// simulates latency into the eventhub
+				time.Sleep(time.Millisecond * 10)
+			}
+		}()
+		res, err := eventHubTable.Subscribes("name", time.Millisecond*100, 4)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []int{3, 2, 1, 0}, res)
+		wg.Wait()
 	})
 }
 

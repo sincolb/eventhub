@@ -2,6 +2,7 @@ package eventhub
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,19 +12,21 @@ import (
 
 func TestSubscirbs(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		hub := NewEventHub()
+		hub := NewEventHub(4)
 		defer hub.Close()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for i := 0; i < 5; i++ {
 				hub.Publish(i, 0)
-				// simulates latency into the eventhub
-				time.Sleep(time.Millisecond * 10)
 			}
 		}()
-		res, err := hub.Subscribes(time.Millisecond*100, 4)
+		wg.Wait()
+		res, err := hub.Subscribes(time.Millisecond*100, 3)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []int{0, 1, 2, 3}, res)
+		require.ElementsMatch(t, []int{3, 2, 1}, res)
 	})
 }
 
@@ -32,7 +35,10 @@ func TestSubscirbsTimeout(t *testing.T) {
 		hub := NewEventHub()
 		defer hub.Close()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for i := 0; i < 5; i++ {
 				hub.Publish(i, 0)
 				// simulates latency into the eventhub
@@ -40,8 +46,9 @@ func TestSubscirbsTimeout(t *testing.T) {
 			}
 		}()
 		res, err := hub.Subscribes(time.Millisecond*100, 4)
-		assert.Equal(t, err, ErrEventHubTimeout)
+		assert.Equal(t, ErrEventHubTimeout, err)
 		assert.Nil(t, res)
+		wg.Wait()
 	})
 }
 
@@ -51,7 +58,10 @@ func TestSubscirbsContextCancel(t *testing.T) {
 		defer hub.Close()
 
 		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for i := 0; i < 5; i++ {
 				hub.Publish(i, 0)
 				// simulates latency into the eventhub
@@ -60,8 +70,39 @@ func TestSubscirbsContextCancel(t *testing.T) {
 			}
 		}()
 
-		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 4)
-		assert.Equal(t, err, context.Canceled)
+		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 11)
+		assert.Equal(t, context.Canceled, err)
 		assert.Nil(t, res)
+		wg.Wait()
+	})
+}
+
+func TestSubscirbsClose(t *testing.T) {
+	runCheckedTest(t, func(t *testing.T) {
+		hub := NewEventHub()
+		defer hub.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// close immediately
+			hub.Close()
+			hub.Publish(1)
+		}()
+
+		res, err := hub.Subscribe(time.Millisecond * 100)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.Subscribes(time.Millisecond*100, 11)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.SubscribeWithContext(context.Background(), 0)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		res, err = hub.SubscribesWithContext(context.Background(), 0, 1)
+		assert.Equal(t, ErrEventHubClosed, err)
+		assert.Nil(t, res)
+		wg.Wait()
 	})
 }
