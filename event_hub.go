@@ -44,6 +44,7 @@ func (hub *EventHub) start() {
 			if !ok {
 				return
 			}
+			var exit bool
 			hub.subscribers.Range(func(key any, value any) bool {
 				ch := key.(chan any)
 				select {
@@ -51,14 +52,19 @@ func (hub *EventHub) start() {
 					hub.subscribers.Delete(ch)
 					close(ch)
 				case <-hub.done:
+					exit = true
 					return false
 				}
 				return true
 			})
+			if exit {
+				return
+			}
 		case <-hub.done:
 			return
 		}
 	}
+
 }
 
 func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
