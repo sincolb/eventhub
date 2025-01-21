@@ -13,7 +13,6 @@ type EventHub struct {
 	subscribers *sync.Map
 	eventChan   chan any
 	done        chan struct{}
-	cond        *sync.Cond
 	list        *Ring
 
 	mu       sync.RWMutex
@@ -32,7 +31,6 @@ func NewEventHub(size ...int) *EventHub {
 	}
 	hub.eventChan = make(chan any, hub.capacity)
 	hub.list = NewRing(hub.capacity)
-	hub.cond = sync.NewCond(&sync.Mutex{})
 	go hub.start()
 	return hub
 }
@@ -45,8 +43,11 @@ func (hub *EventHub) start() {
 				return
 			}
 			var exit bool
-			hub.subscribers.Range(func(key any, value any) bool {
-				ch := key.(chan any)
+			hub.subscribers.Range(func(key, _ any) bool {
+				ch, ok := key.(chan any)
+				if !ok {
+					return true
+				}
 				select {
 				case ch <- data:
 					hub.subscribers.Delete(ch)
@@ -77,15 +78,15 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 		return nil, ErrEventHubClosed
 	}
 
-	hub.mu.RLock()
 	if hub.list.Len() >= 1 {
+		hub.mu.RLock()
 		last := hub.list.Latest().(*eventPayload)
 		if data, ok := last.Payload(); ok {
 			defer hub.mu.RUnlock()
 			return data, nil
 		}
+		hub.mu.RUnlock()
 	}
-	hub.mu.RUnlock()
 
 	ch := make(chan any, 1)
 	hub.subscribers.Store(ch, struct{}{})
@@ -122,25 +123,44 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 	if size <= 0 || size > hub.capacity {
 		size = hub.capacity
 	}
-	canceled, down := hub.down()
+
+	if hub.ringSize() == size {
+		hub.mu.RLock()
+		defer hub.mu.RUnlock()
+		elements := hub.list.Take(size)
+		list := make([]any, len(elements))
+		for i := 0; i < len(elements); i++ {
+			list[i] = elements[i].(*eventPayload).payload
+		}
+		return list, nil
+	}
+
+	cond := sync.NewCond(&sync.Mutex{})
+	hub.subscribers.Store(cond, struct{}{})
+	defer hub.UnSubscribe(cond)
+
+	canceled, down := hub.down(cond)
 	ready := make(chan struct{})
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	go func() {
-		hub.cond.L.Lock()
+		cond.L.Lock()
 		defer func() {
-			hub.cond.L.Unlock()
+			cond.L.Unlock()
 			close(ready)
 		}()
 		for !canceled.Load() && hub.ringSize() < size {
-			hub.cond.Wait()
+			cond.Wait()
 		}
 	}()
 
 	select {
 	case <-ready:
 		hub.mu.RLock()
+		if hub.list == nil {
+			return nil, nil
+		}
 		elements := hub.list.Take(size)
 		hub.mu.RUnlock()
 		list := make([]any, len(elements))
@@ -157,9 +177,9 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 	}
 }
 
-func (hub *EventHub) UnSubscribe(ch chan any) {
+func (hub *EventHub) UnSubscribe(key any) {
 
-	hub.subscribers.Delete(ch)
+	hub.subscribers.Delete(key)
 }
 
 func (hub *EventHub) Publish(data any, life ...time.Duration) error {
@@ -190,9 +210,14 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 		hub.list.Add(payload)
 	}
 	hub.mu.Unlock()
-	hub.cond.L.Lock()
-	hub.cond.Signal()
-	hub.cond.L.Unlock()
+	hub.subscribers.Range(func(key, value any) bool {
+		if cond, ok := key.(*sync.Cond); ok {
+			cond.L.Lock()
+			cond.Signal()
+			cond.L.Unlock()
+		}
+		return true
+	})
 
 	return nil
 }
@@ -205,7 +230,7 @@ func (hub *EventHub) Close() {
 	hub.mu.Lock()
 	hub.subscribers.Clear()
 	hub.closed = 1
-	hub.list = nil
+	// hub.list = nil
 	close(hub.done)
 	hub.mu.Unlock()
 }
@@ -226,18 +251,22 @@ func (hub *EventHub) drain() {
 func (hub *EventHub) ringSize() int {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
-	return hub.list.Len()
+
+	if hub.list != nil {
+		return hub.list.Len()
+	}
+	return 0
 }
 
-func (hub *EventHub) down() (*atomic.Bool, func(error) ([]any, error)) {
+func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, error)) {
 	canceled := &atomic.Bool{}
 	canceled.Store(false)
 
 	return canceled, func(err error) ([]any, error) {
 		defer func() {
-			hub.cond.L.Lock()
-			hub.cond.Signal()
-			hub.cond.L.Unlock()
+			cond.L.Lock()
+			cond.Signal()
+			cond.L.Unlock()
 		}()
 		canceled.Store(true)
 		return nil, err

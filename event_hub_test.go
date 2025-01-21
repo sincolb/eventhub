@@ -12,7 +12,7 @@ import (
 
 func TestSubscirbs(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		hub := NewEventHub(4)
+		hub := NewEventHub(5)
 		defer hub.Close()
 
 		var wg sync.WaitGroup
@@ -26,7 +26,10 @@ func TestSubscirbs(t *testing.T) {
 		wg.Wait()
 		res, err := hub.Subscribes(time.Millisecond*100, 3)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []int{3, 2, 1}, res)
+		require.ElementsMatch(t, []int{2, 1, 0}, res)
+		res, err = hub.Subscribes(time.Millisecond*100, 5)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []int{4, 3, 2, 1, 0}, res)
 	})
 }
 
@@ -106,26 +109,29 @@ func TestSubscirbsClose(t *testing.T) {
 			wg.Wait()
 		})
 		t.Run("close at running ", func(t *testing.T) {
-			hub := NewEventHub()
+			const num = 1024
+			hub := NewEventHub(5)
 			defer hub.Close()
 			var wg sync.WaitGroup
-			wg.Add(3)
+			for i := 0; i < num; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					hub.Publish(i)
+				}(i)
+			}
+			for i := 0; i < num; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					hub.SubscribesWithContext(context.Background(), time.Millisecond*100, 1)
+				}()
+			}
+			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				time.Sleep(time.Millisecond * 3)
+				time.Sleep(time.Millisecond * 5)
 				hub.Close()
-			}()
-			go func() {
-				defer wg.Done()
-				res, err := hub.SubscribeWithContext(context.Background(), time.Millisecond*100)
-				assert.Equal(t, ErrEventHubClosed, err)
-				assert.Nil(t, res)
-			}()
-			go func() {
-				defer wg.Done()
-				res, err := hub.SubscribesWithContext(context.Background(), time.Millisecond*100, 1)
-				assert.Equal(t, ErrEventHubClosed, err)
-				assert.Nil(t, res)
 			}()
 			wg.Wait()
 		})
