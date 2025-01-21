@@ -1,7 +1,6 @@
 package eventhub
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -99,7 +98,6 @@ func TestMultiSubscribe(t *testing.T) {
 			time.AfterFunc(time.Millisecond*10, func() {
 				defer wg.Done()
 				got, err := eventHubTable.Subscribe("after", time.Millisecond*20)
-				fmt.Println(got, err)
 				assert.Nil(t, err)
 				assert.Equal(t, "after", got)
 			})
