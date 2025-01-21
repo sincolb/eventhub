@@ -31,13 +31,11 @@ go func() {
 }()
 <-done
 ```
-## Subscribe only once
+### Subscribe only once
 ```
 hub := eventhub.NewEventHub()
 defer hub.Close()
 
-var wg sync.WaitGroup
-wg.Add(1)
 go func() {
 	defer wg.Done()
 	hub.Publish(&struct {
@@ -48,9 +46,8 @@ go func() {
 }()
 got, err := hub.Subscribe(time.Millisecond * 10)
 fmt.Println(got, err)
-wg.Wait()
 ```
-## Subscribes for multiple
+### Subscribes for multiple
 ```
 hub := NewEventHub()
 defer hub.Close()
