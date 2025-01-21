@@ -32,4 +32,4 @@ jobs:
           command: go test -v -race -coverprofile=coverage.txt -covermode=atomic -count=1 ./...
 
       - name: Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
