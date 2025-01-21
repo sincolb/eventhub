@@ -47,6 +47,12 @@ func TestRingAdd(t *testing.T) {
 	assert.Equal(t, 5050, len(ring.Take()))
 }
 
+func TestRingLatest(t *testing.T) {
+	ring := NewRing(5)
+	elements := ring.Latest()
+	assert.Empty(t, elements)
+}
+
 func BenchmarkRingAdd(b *testing.B) {
 	ring := NewRing(500)
 	b.RunParallel(func(pb *testing.PB) {
