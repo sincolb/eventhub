@@ -133,7 +133,7 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 			hub.cond.L.Unlock()
 			close(ready)
 		}()
-		for !canceled.Load() && hub.list.Len() < size {
+		for !canceled.Load() && hub.ringSize() < size {
 			hub.cond.Wait()
 		}
 	}()
@@ -221,6 +221,12 @@ func (hub *EventHub) drain() {
 	close(hub.eventChan)
 	for range hub.eventChan {
 	}
+}
+
+func (hub *EventHub) ringSize() int {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return hub.list.Len()
 }
 
 func (hub *EventHub) down() (*atomic.Bool, func(error) ([]any, error)) {
