@@ -89,6 +89,7 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 
 	ch := make(chan any, 1)
 	hub.subscribers.Store(ch, struct{}{})
+	defer hub.UnSubscribe(ch)
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -100,12 +101,10 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 		}
 		return v, nil
 	case <-timer.C:
-		hub.UnSubscribe(ch)
 		return nil, ErrEventHubTimeout
 	case <-hub.done:
 		return nil, ErrEventHubClosed
 	case <-ctx.Done():
-		hub.UnSubscribe(ch)
 		return nil, ctx.Err()
 	}
 }
