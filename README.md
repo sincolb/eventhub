@@ -2,6 +2,8 @@
 
 [![GoDoc](https://godoc.org/github.com/sincolb/eventhub?status.svg)](https://godoc.org/github.com/sincolb/eventhub)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sincolb/eventhub)](https://goreportcard.com/report/github.com/sincolb/eventhub)
+[![Workflow for Codecov Action](https://github.com/sincolb/eventhub/actions/workflows/go.yml/badge.svg)](https://github.com/sincolb/eventhub/actions/workflows/go.yml)
+
 
 `eventhub` is a stand-alone version of the event subscription component that can accept multiple or one results, and supports timeouts and contexts.
 
