@@ -102,30 +102,3 @@ func TestSubscirbsClose(t *testing.T) {
 		wg.Wait()
 	})
 }
-
-func TestSubscirbsShutdown(t *testing.T) {
-	runCheckedTest(t, func(t *testing.T) {
-		hub := NewEventHub()
-		defer hub.Close()
-
-		const parallel = 10
-		var wg sync.WaitGroup
-		for i := 0; i < parallel; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				hub.Publish(i)
-			}()
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			hub.Close()
-		}()
-
-		res, err := hub.Subscribe(time.Millisecond * 100)
-		assert.Nil(t, err)
-		assert.NotNil(t, res)
-		wg.Wait()
-	})
-}

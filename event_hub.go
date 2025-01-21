@@ -15,6 +15,7 @@ type EventHub struct {
 	cond        *sync.Cond
 	list        *Ring
 
+	once     sync.Once
 	mu       sync.RWMutex
 	capacity int
 	closed   int32
@@ -198,16 +199,12 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 }
 
 func (hub *EventHub) Close() {
-	if hub.Closed() {
-		return
-	}
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
-
-	hub.closed = 1
-	hub.list = nil
-	hub.subscribers = make(map[chan any]struct{})
-	close(hub.done)
+	hub.once.Do(func() {
+		hub.closed = 1
+		hub.list = nil
+		hub.subscribers = make(map[chan any]struct{})
+		close(hub.done)
+	})
 }
 
 func (hub *EventHub) Closed() bool {
