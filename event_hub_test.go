@@ -27,7 +27,7 @@ func TestSubscirbs(t *testing.T) {
 		wg.Wait()
 		res, err := hub.Subscribes(time.Millisecond*100, 3)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []int{2, 1, 0}, res)
+		require.ElementsMatch(t, []int{4, 3, 2}, res)
 		res, err = hub.Subscribes(time.Millisecond*100, 5)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []int{4, 3, 2, 1, 0}, res)

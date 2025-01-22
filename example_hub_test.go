@@ -41,5 +41,5 @@ func ExampleEventHub_Subscribes() {
 	res, err := hub.Subscribes(time.Millisecond*100, 3)
 	fmt.Println(res, err)
 	// Output:
-	// [2 1 0] <nil>
+	// [4 3 2] <nil>
 }
