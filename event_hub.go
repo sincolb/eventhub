@@ -55,8 +55,7 @@ func (hub *EventHub) start() {
 				}
 				select {
 				case ch <- data:
-					// hub.subscribers.Delete(ch)
-					// close(ch)
+					close(ch)
 				case <-hub.done:
 					return false
 				}

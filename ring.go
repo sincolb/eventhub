@@ -67,7 +67,7 @@ func (r *Ring) Take(n ...int) []any {
 		}
 	default:
 		j := 0
-		for i := num - 1; i >= 0; i-- {
+		for i := size - 1; j < num; i-- {
 			elements[j] = r.elements[(start+i)%rlen]
 			j++
 		}
