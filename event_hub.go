@@ -37,29 +37,32 @@ func NewEventHub(size ...int) *EventHub {
 }
 
 func (hub *EventHub) start() {
+	defer hub.subscribers.Clear()
+
 	for {
 		select {
 		case data, ok := <-hub.eventChan:
 			if !ok {
 				return
 			}
-			var exit bool
 			hub.subscribers.Range(func(key, _ any) bool {
+				if hub.Closed() {
+					return false
+				}
 				ch, ok := key.(chan any)
 				if !ok {
 					return true
 				}
 				select {
 				case ch <- data:
-					hub.subscribers.Delete(ch)
-					close(ch)
+					// hub.subscribers.Delete(ch)
+					// close(ch)
 				case <-hub.done:
-					exit = true
 					return false
 				}
 				return true
 			})
-			if exit {
+			if hub.Closed() {
 				return
 			}
 		case <-hub.done:
@@ -179,6 +182,11 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 }
 
 func (hub *EventHub) UnSubscribe(key any) {
+	if cond, ok := key.(*sync.Cond); ok {
+		cond.L.Lock()
+		cond.Signal()
+		cond.L.Unlock()
+	}
 
 	hub.subscribers.Delete(key)
 }
@@ -227,6 +235,7 @@ func (hub *EventHub) Close() {
 	hub.subscribers.Clear()
 	// hub.list = nil
 	close(hub.done)
+	close(hub.eventChan)
 	hub.mu.Unlock()
 }
 
@@ -246,7 +255,6 @@ func (hub *EventHub) ringSize() int {
 
 func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, error)) {
 	canceled := &atomic.Bool{}
-	canceled.Store(false)
 
 	return canceled, func(err error) ([]any, error) {
 		canceled.Store(true)

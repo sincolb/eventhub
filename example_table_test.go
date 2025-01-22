@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func ExampleSubscirbe() {
+func ExampleEventHubTable_Subscribe() {
 	table := NewEventHubTable[string]()
 	defer table.Stop()
 
@@ -26,7 +26,7 @@ func ExampleSubscirbe() {
 	// 4 <nil>
 }
 
-func ExampleSubscirbes() {
+func ExampleEventHubTable_Subscribes() {
 	table := NewEventHubTable[string]()
 	defer table.Stop()
 

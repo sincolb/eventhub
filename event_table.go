@@ -88,22 +88,20 @@ func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 		return ErrEventHubTableClosed
 	}
 
-	table.mu.RLock()
+	table.mu.Lock()
+	defer table.mu.Unlock()
 	hub, ok := table.subscriptions[name]
-	table.mu.RUnlock()
 	if ok {
 		return hub.Publish(data, life)
 	}
 
 	option := buildEventHubTableOptions(opts...)
 	if option.autoCommit {
-		table.mu.Lock()
 		if option.capacity == nil {
 			table.subscriptions[name] = NewEventHub()
 		} else {
 			table.subscriptions[name] = NewEventHub(*option.capacity)
 		}
-		table.mu.Unlock()
 		return table.subscriptions[name].Publish(data, life)
 	}
 

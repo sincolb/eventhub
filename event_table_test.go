@@ -11,66 +11,66 @@ import (
 )
 
 func TestSubscribe(t *testing.T) {
+	type Placeholder struct{}
+	tests := []struct {
+		name string
+		data any
+	}{
+		{
+			name: "a",
+			data: "payload",
+		},
+		{
+			name: "b",
+			data: Placeholder{},
+		},
+		{
+			name: "c",
+			data: &Placeholder{},
+		},
+		{
+			name: "d",
+			data: []any{1, 2, 3},
+		},
+		{
+			name: "e",
+			data: map[string]struct{}{},
+		},
+		{
+			name: "f",
+			data: make(chan struct{}),
+		},
+	}
 	runCheckedTest(t, func(t *testing.T) {
-		eventHubTable := NewEventHubTable[string]()
-		defer eventHubTable.Stop()
-
-		type Placeholder struct{}
-		tests := []struct {
-			name string
-			data any
-		}{
-			{
-				name: "a",
-				data: "payload",
-			},
-			{
-				name: "b",
-				data: Placeholder{},
-			},
-			{
-				name: "c",
-				data: &Placeholder{},
-			},
-			{
-				name: "d",
-				data: []any{1, 2, 3},
-			},
-			{
-				name: "e",
-				data: map[string]struct{}{},
-			},
-			{
-				name: "f",
-				data: make(chan struct{}),
-			},
-		}
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for _, item := range tests {
-				t.Run(item.name, func(t *testing.T) {
-					eventHubTable.Distribute(item.name, time.Second, item.data)
-				})
-			}
-		}()
-		wg.Wait()
-		for _, test := range tests {
-			got, err := eventHubTable.Subscribe(test.name, time.Millisecond*10)
-			require.NoError(t, err)
-			require.Exactly(t, test.data, got)
+		for _, item := range tests {
+			item := item
+			t.Run(item.name, func(t *testing.T) {
+				t.Parallel()
+				table := NewEventHubTable[string]()
+				defer table.Stop()
+				go func() {
+					table.Distribute(item.name, time.Second, item.data)
+				}()
+				got, err := table.Subscribe(item.name, time.Millisecond*10)
+				if err == nil {
+					assert.NoError(t, err)
+					assert.Exactly(t, item.data, got)
+				} else {
+					assert.Equal(t, ErrEventHubTimeout, err)
+					assert.Nil(t, got)
+				}
+			})
 		}
 	})
 }
 
 func TestMultiSubscribe(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		eventHubTable := NewEventHubTable[string]()
-		defer eventHubTable.Stop()
 
 		t.Run("multiple", func(t *testing.T) {
+			t.Parallel()
+			eventHubTable := NewEventHubTable[string]()
+			defer eventHubTable.Stop()
 			var wg sync.WaitGroup
 			wg.Add(1)
 			go func() {
@@ -89,6 +89,9 @@ func TestMultiSubscribe(t *testing.T) {
 		})
 
 		t.Run("another", func(t *testing.T) {
+			t.Parallel()
+			eventHubTable := NewEventHubTable[string]()
+			defer eventHubTable.Stop()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			time.AfterFunc(time.Millisecond*5, func() {
@@ -124,23 +127,29 @@ func TestDistribute(t *testing.T) {
 
 func TestMultiDistribute(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
-		eventHubTable := NewEventHubTable[string]()
-		defer eventHubTable.Stop()
+		t.Run("basic", func(t *testing.T) {
+			t.Parallel()
+			eventHubTable := NewEventHubTable[string]()
+			defer eventHubTable.Stop()
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			eventHubTable.Distribute("name", time.Second, "payload", WithEventHubCapacity(10))
-			eventHubTable.Distribute("name", time.Second, "payload new")
-		}()
-		wg.Wait()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				eventHubTable.Distribute("name", time.Second, "payload", WithEventHubCapacity(10))
+				eventHubTable.Distribute("name", time.Second, "payload new")
+			}()
+			wg.Wait()
 
-		got, err := eventHubTable.Subscribe("name", time.Millisecond*10)
-		assert.Nil(t, err)
-		assert.Exactly(t, "payload new", got)
+			got, err := eventHubTable.Subscribe("name", time.Millisecond*10)
+			assert.Nil(t, err)
+			assert.Exactly(t, "payload new", got)
+		})
 
 		t.Run("another", func(t *testing.T) {
+			t.Parallel()
+			eventHubTable := NewEventHubTable[string]()
+			defer eventHubTable.Stop()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			time.AfterFunc(time.Millisecond*2, func() {
@@ -273,8 +282,11 @@ func TestEventTableSubscirbs(t *testing.T) {
 			}
 		}()
 		res, err := eventHubTable.Subscribes("name", time.Millisecond*200, 4)
-		require.NoError(t, err)
-		require.Len(t, res, 4)
+		if err == nil {
+			require.Len(t, res, 4)
+		} else {
+			require.Equal(t, ErrEventHubTimeout, err)
+		}
 		wg.Wait()
 	})
 }

@@ -40,18 +40,25 @@ func TestSubscirbsTimeout(t *testing.T) {
 		defer hub.Close()
 
 		var wg sync.WaitGroup
-		wg.Add(1)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 5; i++ {
-				hub.Publish(i, 0)
-				// simulates latency into the eventhub
-				time.Sleep(time.Millisecond * 100)
-			}
+			res, err := hub.Subscribes(0, 1)
+			require.Equal(t, ErrEventHubTimeout, err)
+			require.Nil(t, res)
 		}()
-		res, err := hub.Subscribes(time.Millisecond*100, 4)
-		assert.Equal(t, ErrEventHubTimeout, err)
-		assert.Nil(t, res)
+		go func() {
+			defer wg.Done()
+			res, err := hub.Subscribes(time.Millisecond*10, 3)
+			require.Equal(t, ErrEventHubTimeout, err)
+			require.Nil(t, res)
+		}()
+		go func() {
+			defer wg.Done()
+			res, err := hub.Subscribes(time.Millisecond*20, 3)
+			require.Equal(t, ErrEventHubTimeout, err)
+			require.Nil(t, res)
+		}()
 		wg.Wait()
 	})
 }
@@ -84,6 +91,7 @@ func TestSubscirbsContextCancel(t *testing.T) {
 func TestSubscirbsClose(t *testing.T) {
 	runCheckedTest(t, func(t *testing.T) {
 		t.Run("close immediately", func(t *testing.T) {
+			t.Parallel()
 			hub := NewEventHub()
 			defer hub.Close()
 			var wg sync.WaitGroup
@@ -110,6 +118,7 @@ func TestSubscirbsClose(t *testing.T) {
 			wg.Wait()
 		})
 		t.Run("close at running ", func(t *testing.T) {
+			t.Parallel()
 			const num = 1024
 			hub := NewEventHub(5)
 			defer hub.Close()

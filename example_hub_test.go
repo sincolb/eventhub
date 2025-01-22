@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func ExampleHubSubscirbe() {
+func ExampleEventHub_Subscribe() {
 	hub := NewEventHub()
 	defer hub.Close()
 
@@ -25,7 +25,7 @@ func ExampleHubSubscirbe() {
 	// 4 <nil>
 }
 
-func ExampleHubSubscirbes() {
+func ExampleEventHub_Subscribes() {
 	hub := NewEventHub()
 	defer hub.Close()
 
