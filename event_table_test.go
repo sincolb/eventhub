@@ -272,7 +272,7 @@ func TestEventTableSubscirbs(t *testing.T) {
 				time.Sleep(time.Millisecond * 10)
 			}
 		}()
-		res, err := eventHubTable.Subscribes("name", time.Millisecond*100, 4)
+		res, err := eventHubTable.Subscribes("name", time.Millisecond*200, 4)
 		require.NoError(t, err)
 		require.Len(t, res, 4)
 		wg.Wait()

@@ -16,14 +16,15 @@ type EventHub struct {
 	list        *Ring
 
 	mu       sync.RWMutex
+	closed   *atomic.Int32
 	capacity int
-	closed   int32
 }
 
 func NewEventHub(size ...int) *EventHub {
 	hub := &EventHub{
 		subscribers: &sync.Map{},
 		done:        make(chan struct{}),
+		closed:      &atomic.Int32{},
 	}
 	hub.capacity = defaultEventChanSize
 	if len(size) > 0 {
@@ -145,9 +146,6 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 	defer timer.Stop()
 
 	go func() {
-		if hub.Closed() {
-			return
-		}
 		cond.L.Lock()
 		defer func() {
 			cond.L.Unlock()
@@ -200,7 +198,7 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	select {
 	case hub.eventChan <- data:
 	case <-hub.done:
-		hub.drain()
+		close(hub.eventChan)
 		return ErrEventHubClosed
 	default:
 	}
@@ -220,30 +218,20 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 }
 
 func (hub *EventHub) Close() {
-	if hub.Closed() {
+	if !hub.closed.CompareAndSwap(0, 1) {
 		return
 	}
 
 	hub.mu.Lock()
 	hub.closeSubscribers()
 	hub.subscribers.Clear()
-	hub.closed = 1
 	// hub.list = nil
 	close(hub.done)
 	hub.mu.Unlock()
 }
 
 func (hub *EventHub) Closed() bool {
-	hub.mu.RLock()
-	defer hub.mu.RUnlock()
-
-	return hub.closed == 1
-}
-
-func (hub *EventHub) drain() {
-	close(hub.eventChan)
-	for range hub.eventChan {
-	}
+	return hub.closed.Load() == 1
 }
 
 func (hub *EventHub) ringSize() int {
@@ -261,12 +249,8 @@ func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, er
 	canceled.Store(false)
 
 	return canceled, func(err error) ([]any, error) {
-		defer func() {
-			cond.L.Lock()
-			cond.Signal()
-			cond.L.Unlock()
-		}()
 		canceled.Store(true)
+		cond.Signal()
 		return nil, err
 	}
 }
@@ -274,9 +258,7 @@ func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, er
 func (hub *EventHub) closeSubscribers() {
 	hub.subscribers.Range(func(key, value any) bool {
 		if cond, ok := key.(*sync.Cond); ok {
-			cond.L.Lock()
 			cond.Signal()
-			cond.L.Unlock()
 		}
 		return true
 	})
