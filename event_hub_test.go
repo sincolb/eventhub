@@ -3,6 +3,7 @@ package eventhub
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,11 +121,13 @@ func TestSubscirbsClose(t *testing.T) {
 					hub.Publish(i)
 				}(i)
 			}
+			var total int32
 			for i := 0; i < num; i++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					hub.SubscribesWithContext(context.Background(), time.Millisecond*100, 1)
+					atomic.AddInt32(&total, 1)
 				}()
 			}
 			wg.Add(1)
@@ -134,6 +137,7 @@ func TestSubscirbsClose(t *testing.T) {
 				hub.Close()
 			}()
 			wg.Wait()
+			assert.Equal(t, int32(num), total)
 		})
 	})
 }

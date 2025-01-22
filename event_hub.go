@@ -145,12 +145,15 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 	defer timer.Stop()
 
 	go func() {
+		if hub.Closed() {
+			return
+		}
 		cond.L.Lock()
 		defer func() {
 			cond.L.Unlock()
 			close(ready)
 		}()
-		for !canceled.Load() && hub.ringSize() < size {
+		for !hub.Closed() && !canceled.Load() && hub.ringSize() < size {
 			cond.Wait()
 		}
 	}()
@@ -183,6 +186,8 @@ func (hub *EventHub) UnSubscribe(key any) {
 }
 
 func (hub *EventHub) Publish(data any, life ...time.Duration) error {
+	defer hub.closeSubscribers()
+
 	if hub.Closed() {
 		return ErrEventHubClosed
 	}
@@ -210,14 +215,6 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 		hub.list.Add(payload)
 	}
 	hub.mu.Unlock()
-	hub.subscribers.Range(func(key, value any) bool {
-		if cond, ok := key.(*sync.Cond); ok {
-			cond.L.Lock()
-			cond.Signal()
-			cond.L.Unlock()
-		}
-		return true
-	})
 
 	return nil
 }
@@ -228,14 +225,7 @@ func (hub *EventHub) Close() {
 	}
 
 	hub.mu.Lock()
-	hub.subscribers.Range(func(key, value any) bool {
-		if cond, ok := key.(*sync.Cond); ok {
-			cond.L.Lock()
-			cond.Signal()
-			cond.L.Unlock()
-		}
-		return true
-	})
+	hub.closeSubscribers()
 	hub.subscribers.Clear()
 	hub.closed = 1
 	// hub.list = nil
@@ -279,4 +269,15 @@ func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, er
 		canceled.Store(true)
 		return nil, err
 	}
+}
+
+func (hub *EventHub) closeSubscribers() {
+	hub.subscribers.Range(func(key, value any) bool {
+		if cond, ok := key.(*sync.Cond); ok {
+			cond.L.Lock()
+			cond.Signal()
+			cond.L.Unlock()
+		}
+		return true
+	})
 }

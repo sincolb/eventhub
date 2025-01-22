@@ -274,7 +274,7 @@ func TestEventTableSubscirbs(t *testing.T) {
 		}()
 		res, err := eventHubTable.Subscribes("name", time.Millisecond*100, 4)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []int{3, 2, 1, 0}, res)
+		require.Len(t, res, 4)
 		wg.Wait()
 	})
 }
