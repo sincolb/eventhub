@@ -228,6 +228,14 @@ func (hub *EventHub) Close() {
 	}
 
 	hub.mu.Lock()
+	hub.subscribers.Range(func(key, value any) bool {
+		if cond, ok := key.(*sync.Cond); ok {
+			cond.L.Lock()
+			cond.Signal()
+			cond.L.Unlock()
+		}
+		return true
+	})
 	hub.subscribers.Clear()
 	hub.closed = 1
 	// hub.list = nil
