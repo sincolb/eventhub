@@ -11,7 +11,6 @@ const defaultEventChanSize = 10
 
 type EventHub struct {
 	subscribers *sync.Map
-	eventChan   chan any
 	done        chan struct{}
 	list        *Ring
 
@@ -30,43 +29,8 @@ func NewEventHub(size ...int) *EventHub {
 	if len(size) > 0 {
 		hub.capacity = size[0]
 	}
-	hub.eventChan = make(chan any, hub.capacity)
 	hub.list = NewRing(hub.capacity)
-	go hub.start()
 	return hub
-}
-
-func (hub *EventHub) start() {
-	for {
-		select {
-		case data, ok := <-hub.eventChan:
-			if !ok {
-				return
-			}
-			hub.subscribers.Range(func(key, _ any) bool {
-				if hub.Closed() {
-					return false
-				}
-				ch, ok := key.(chan any)
-				if !ok {
-					return true
-				}
-				select {
-				case ch <- data:
-					close(ch)
-				case <-hub.done:
-					return false
-				}
-				return true
-			})
-			if hub.Closed() {
-				return
-			}
-		case <-hub.done:
-			return
-		}
-	}
-
 }
 
 func (hub *EventHub) Subscribe(timeout time.Duration) (any, error) {
@@ -79,36 +43,41 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 		return nil, ErrEventHubClosed
 	}
 
-	if hub.list.Len() >= 1 {
+	const size = 1
+	if hub.ringSize() >= size {
 		hub.mu.RLock()
 		last := hub.list.Latest().(*eventPayload)
 		if data, ok := last.Payload(); ok {
-			defer hub.mu.RUnlock()
+			hub.mu.RUnlock()
 			return data, nil
 		}
 		hub.mu.RUnlock()
 	}
 
-	ch := make(chan any, 1)
-	hub.subscribers.Store(ch, struct{}{})
-	defer hub.UnSubscribe(ch)
+	cond, subscribe := hub.condSubscriber(size, timeout)
+	defer hub.UnSubscribe(cond)
 
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case v, ok := <-ch:
-		if !ok {
-			return nil, ErrEventHubChanClosed
+	data, err := subscribe(ctx, func(down *downError) ([]any, error) {
+		if last := hub.list.Latest(); last != nil {
+			if data, ok := last.(*eventPayload).Payload(); ok {
+				return []any{data}, nil
+			}
 		}
-		return v, nil
-	case <-timer.C:
-		return nil, ErrEventHubTimeout
-	case <-hub.done:
-		return nil, ErrEventHubClosed
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		if e := down.Error(); e != nil {
+			return nil, e
+		} else if hub.Closed() {
+			return nil, ErrEventHubClosed
+		} else if ctx.Err() != nil {
+			return nil, ctx.Err()
+		} else {
+			return nil, ErrEventHubTimeout
+		}
+	})
+	if len(data) > 0 {
+		return data[0], nil
 	}
+
+	return nil, err
 }
 
 func (hub *EventHub) Subscribes(timeout time.Duration, size int) ([]any, error) {
@@ -136,46 +105,17 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 		return list, nil
 	}
 
-	cond := sync.NewCond(&sync.Mutex{})
-	hub.subscribers.Store(cond, struct{}{})
+	cond, subscribe := hub.condSubscriber(size, timeout)
 	defer hub.UnSubscribe(cond)
 
-	canceled, down := hub.down(cond)
-	ready := make(chan struct{})
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	go func() {
-		cond.L.Lock()
-		defer func() {
-			cond.L.Unlock()
-			close(ready)
-		}()
-		for !hub.Closed() && !canceled.Load() && hub.ringSize() < size {
-			cond.Wait()
-		}
-	}()
-
-	select {
-	case <-ready:
-		hub.mu.RLock()
-		if hub.list == nil {
-			return nil, nil
-		}
+	return subscribe(ctx, func(_ *downError) ([]any, error) {
 		elements := hub.list.Take(size)
-		hub.mu.RUnlock()
 		list := make([]any, len(elements))
 		for i := 0; i < len(elements); i++ {
 			list[i] = elements[i].(*eventPayload).payload
 		}
 		return list, nil
-	case <-timer.C:
-		return down(ErrEventHubTimeout)
-	case <-hub.done:
-		return down(ErrEventHubClosed)
-	case <-ctx.Done():
-		return down(ctx.Err())
-	}
+	})
 }
 
 func (hub *EventHub) UnSubscribe(key any) {
@@ -198,14 +138,6 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	var lifeTime time.Duration
 	if len(life) > 0 {
 		lifeTime = life[0]
-	}
-
-	select {
-	case hub.eventChan <- data:
-	case <-hub.done:
-		close(hub.eventChan)
-		return ErrEventHubClosed
-	default:
 	}
 
 	hub.mu.Lock()
@@ -232,12 +164,53 @@ func (hub *EventHub) Close() {
 	hub.subscribers.Clear()
 	// hub.list = nil
 	close(hub.done)
-	close(hub.eventChan)
 	hub.mu.Unlock()
 }
 
 func (hub *EventHub) Closed() bool {
 	return hub.closed.Load() == 1
+}
+
+type ReducerFunc func(*downError) ([]any, error)
+
+func (hub *EventHub) condSubscriber(size int, timeout time.Duration) (
+	*sync.Cond, func(context.Context, ReducerFunc) ([]any, error)) {
+	cond := sync.NewCond(&sync.Mutex{})
+	hub.subscribers.Store(cond, struct{}{})
+
+	return cond, func(ctx context.Context, reducer ReducerFunc) ([]any, error) {
+		canceled, down := hub.down(cond)
+		ready := make(chan struct{})
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+
+		go func() {
+			cond.L.Lock()
+			defer func() {
+				cond.L.Unlock()
+				close(ready)
+			}()
+			for !hub.Closed() && !canceled.Load() && hub.ringSize() < size {
+				cond.Wait()
+			}
+		}()
+
+		select {
+		case <-ready:
+			hub.mu.RLock()
+			defer hub.mu.RUnlock()
+			if hub.list == nil {
+				return nil, nil
+			}
+			return reducer(canceled)
+		case <-timer.C:
+			return down(ErrEventHubTimeout)
+		case <-hub.done:
+			return down(ErrEventHubClosed)
+		case <-ctx.Done():
+			return down(ctx.Err())
+		}
+	}
 }
 
 func (hub *EventHub) ringSize() int {
@@ -250,11 +223,11 @@ func (hub *EventHub) ringSize() int {
 	return 0
 }
 
-func (hub *EventHub) down(cond *sync.Cond) (*atomic.Bool, func(error) ([]any, error)) {
-	canceled := &atomic.Bool{}
+func (hub *EventHub) down(cond *sync.Cond) (*downError, func(error) ([]any, error)) {
+	canceled := new(downError)
 
 	return canceled, func(err error) ([]any, error) {
-		canceled.Store(true)
+		canceled.setError(err)
 		cond.Signal()
 		return nil, err
 	}
@@ -267,4 +240,28 @@ func (hub *EventHub) closeSubscribers() {
 		}
 		return true
 	})
+}
+
+type downError struct {
+	canceled atomic.Bool
+	onceErr  sync.Once
+	lastErr  atomic.Value
+}
+
+func (d *downError) setError(e error) {
+	d.onceErr.Do(func() {
+		d.canceled.Store(true)
+		d.lastErr.Store(e)
+	})
+}
+
+func (d *downError) Load() bool {
+	return d.canceled.Load()
+}
+
+func (d *downError) Error() error {
+	if e := d.lastErr.Load(); e != nil {
+		return e.(error)
+	}
+	return nil
 }
