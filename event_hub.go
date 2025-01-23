@@ -125,7 +125,7 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 		size = hub.capacity
 	}
 
-	if hub.ringSize() == size {
+	if hub.ringSize() >= size {
 		hub.mu.RLock()
 		defer hub.mu.RUnlock()
 		elements := hub.list.Take(size)
