@@ -73,15 +73,16 @@ func TestSubscirbsContextCancel(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 5; i++ {
-				hub.Publish(i, 0)
-				// simulates latency into the eventhub
-				time.Sleep(time.Millisecond * 10)
-				cancel()
-			}
+			// simulates latency into the eventhub
+			time.Sleep(time.Millisecond * 10)
+			cancel()
 		}()
 
-		res, err := hub.SubscribesWithContext(ctx, time.Millisecond*100, 11)
+		res, err := hub.SubscribeWithContext(ctx, time.Millisecond*100)
+		assert.Equal(t, context.Canceled, err)
+		assert.Nil(t, res)
+
+		res, err = hub.SubscribesWithContext(ctx, time.Millisecond*100, 11)
 		assert.Equal(t, context.Canceled, err)
 		assert.Nil(t, res)
 		wg.Wait()

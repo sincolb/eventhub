@@ -37,8 +37,6 @@ func NewEventHub(size ...int) *EventHub {
 }
 
 func (hub *EventHub) start() {
-	defer hub.subscribers.Clear()
-
 	for {
 		select {
 		case data, ok := <-hub.eventChan:
