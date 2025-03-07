@@ -119,6 +119,10 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 }
 
 func (hub *EventHub) UnSubscribe(key any) {
+	if hub.Closed() {
+		return
+	}
+
 	if cond, ok := key.(*sync.Cond); ok {
 		cond.L.Lock()
 		cond.Signal()
