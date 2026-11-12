@@ -26,7 +26,7 @@ func NewEventHub(size ...int) *EventHub {
 		closed:      &atomic.Int32{},
 	}
 	hub.capacity = defaultEventChanSize
-	if len(size) > 0 {
+	if len(size) > 0 && size[0] > 0 {
 		hub.capacity = size[0]
 	}
 	hub.list = NewRing(hub.capacity)
@@ -44,24 +44,16 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 	}
 
 	const size = 1
-	if hub.ringSize() >= size {
-		hub.mu.RLock()
-		last := hub.list.Latest().(*eventPayload)
-		if data, ok := last.Payload(); ok {
-			hub.mu.RUnlock()
-			return data, nil
-		}
-		hub.mu.RUnlock()
+	if list := hub.freshList(1); len(list) > 0 {
+		return list[0], nil
 	}
 
-	cond, subscribe := hub.condSubscriber(size, timeout)
+	cond, subscribe := hub.condSubscriber(size, timeout, false)
 	defer hub.UnSubscribe(cond)
 
 	data, err := subscribe(ctx, func(down *downError) ([]any, error) {
-		if last := hub.list.Latest(); last != nil {
-			if data, ok := last.(*eventPayload).Payload(); ok {
-				return []any{data}, nil
-			}
+		if list := hub.freshList(1); len(list) > 0 {
+			return list, nil
 		}
 		if e := down.Error(); e != nil {
 			return nil, e
@@ -80,12 +72,13 @@ func (hub *EventHub) SubscribeWithContext(ctx context.Context, timeout time.Dura
 	return nil, err
 }
 
-func (hub *EventHub) Subscribes(timeout time.Duration, size int) ([]any, error) {
-	return hub.SubscribesWithContext(context.Background(), timeout, size)
+func (hub *EventHub) Subscribes(timeout time.Duration, size int, returnPartial ...bool) ([]any, error) {
+	partial := len(returnPartial) > 0 && returnPartial[0]
+	return hub.SubscribesWithContext(context.Background(), timeout, size, partial)
 }
 
-func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Duration,
-	size int) ([]any, error) {
+func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Duration, size int,
+	returnPartial bool) ([]any, error) {
 	if hub.Closed() {
 		return nil, ErrEventHubClosed
 	}
@@ -94,27 +87,15 @@ func (hub *EventHub) SubscribesWithContext(ctx context.Context, timeout time.Dur
 		size = hub.capacity
 	}
 
-	if hub.ringSize() >= size {
-		hub.mu.RLock()
-		defer hub.mu.RUnlock()
-		elements := hub.list.Take(size)
-		list := make([]any, len(elements))
-		for i := 0; i < len(elements); i++ {
-			list[i] = elements[i].(*eventPayload).payload
-		}
+	if list := hub.freshList(size); len(list) >= size {
 		return list, nil
 	}
 
-	cond, subscribe := hub.condSubscriber(size, timeout)
+	cond, subscribe := hub.condSubscriber(size, timeout, returnPartial)
 	defer hub.UnSubscribe(cond)
 
 	return subscribe(ctx, func(_ *downError) ([]any, error) {
-		elements := hub.list.Take(size)
-		list := make([]any, len(elements))
-		for i := 0; i < len(elements); i++ {
-			list[i] = elements[i].(*eventPayload).payload
-		}
-		return list, nil
+		return hub.freshList(size), nil
 	})
 }
 
@@ -133,8 +114,6 @@ func (hub *EventHub) UnSubscribe(key any) {
 }
 
 func (hub *EventHub) Publish(data any, life ...time.Duration) error {
-	defer hub.closeSubscribers()
-
 	if hub.Closed() {
 		return ErrEventHubClosed
 	}
@@ -155,6 +134,9 @@ func (hub *EventHub) Publish(data any, life ...time.Duration) error {
 	}
 	hub.mu.Unlock()
 
+	// 数据写入后再唤醒订阅者;不持有 hub.mu,避免与等待侧 cond.L -> hub.mu 的锁序形成环路
+	hub.closeSubscribers()
+
 	return nil
 }
 
@@ -163,12 +145,8 @@ func (hub *EventHub) Close() {
 		return
 	}
 
-	hub.mu.Lock()
-	hub.closeSubscribers()
-	hub.subscribers.Clear()
-	// hub.list = nil
 	close(hub.done)
-	hub.mu.Unlock()
+	hub.closeSubscribers()
 }
 
 func (hub *EventHub) Closed() bool {
@@ -177,7 +155,7 @@ func (hub *EventHub) Closed() bool {
 
 type ReducerFunc func(*downError) ([]any, error)
 
-func (hub *EventHub) condSubscriber(size int, timeout time.Duration) (
+func (hub *EventHub) condSubscriber(size int, timeout time.Duration, returnPartial bool) (
 	*sync.Cond, func(context.Context, ReducerFunc) ([]any, error)) {
 	cond := sync.NewCond(&sync.Mutex{})
 	hub.subscribers.Store(cond, struct{}{})
@@ -194,37 +172,66 @@ func (hub *EventHub) condSubscriber(size int, timeout time.Duration) (
 				cond.L.Unlock()
 				close(ready)
 			}()
-			for !hub.Closed() && !canceled.Load() && hub.ringSize() < size {
+			for !hub.Closed() && !canceled.Load() && len(hub.freshList(size)) < size {
 				cond.Wait()
 			}
 		}()
 
+		caller := func(e error) ([]any, error) {
+			_, err := down(e)
+			if !returnPartial {
+				return nil, err
+			}
+			data, _ := reducer(canceled)
+			return data, err
+		}
 		select {
 		case <-ready:
 			hub.mu.RLock()
 			defer hub.mu.RUnlock()
-			if hub.list == nil {
-				return nil, nil
+			list, rerr := reducer(canceled)
+			if len(list) >= size {
+				return list, nil
 			}
-			return reducer(canceled)
+			// 数据不足:等待通常因 Close 竞争提前终止,返回错误而非"空数据+nil",
+			// 避免调用方把关闭误判为正常返回(数据过期竞态极窄,视为无终止原因)
+			if hub.Closed() {
+				if !returnPartial {
+					return nil, ErrEventHubClosed
+				}
+				return list, ErrEventHubClosed
+			}
+			return list, rerr
 		case <-timer.C:
-			return down(ErrEventHubTimeout)
+			return caller(ErrEventHubTimeout)
 		case <-hub.done:
-			return down(ErrEventHubClosed)
+			return caller(ErrEventHubClosed)
 		case <-ctx.Done():
-			return down(ctx.Err())
+			return caller(ctx.Err())
 		}
 	}
 }
 
-func (hub *EventHub) ringSize() int {
-	hub.mu.RLock()
-	defer hub.mu.RUnlock()
-
-	if hub.list != nil {
-		return hub.list.Len()
+// freshList 返回 ring 中最近 size 条未过期的 payload,按时间序(最旧在前)返回;
+// 若未过期的不够 size 条,返回全部未过期数据。不消费数据,可重复读取。
+func (hub *EventHub) freshList(size int) []any {
+	list := make([]any, 0, size)
+	hub.list.ForEachNewest(func(v any) bool {
+		if p, ok := v.(*eventPayload); ok {
+			if data, fresh := p.Payload(); fresh {
+				list = append(list, data)
+				if len(list) >= size {
+					return false
+				}
+			}
+		}
+		return true
+	})
+	// 反转为时间序,与 Subscribes 的返回约定一致
+	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+		list[i], list[j] = list[j], list[i]
 	}
-	return 0
+	return list
 }
 
 func (hub *EventHub) down(cond *sync.Cond) (*downError, func(error) ([]any, error)) {
@@ -232,7 +239,9 @@ func (hub *EventHub) down(cond *sync.Cond) (*downError, func(error) ([]any, erro
 
 	return canceled, func(err error) ([]any, error) {
 		canceled.setError(err)
+		cond.L.Lock()
 		cond.Signal()
+		cond.L.Unlock()
 		return nil, err
 	}
 }
@@ -240,7 +249,10 @@ func (hub *EventHub) down(cond *sync.Cond) (*downError, func(error) ([]any, erro
 func (hub *EventHub) closeSubscribers() {
 	hub.subscribers.Range(func(key, value any) bool {
 		if cond, ok := key.(*sync.Cond); ok {
+			// 必须在持有 cond.L 时 Signal,否则与等待侧"检查-等待"窗口竞争会丢失唤醒
+			cond.L.Lock()
 			cond.Signal()
+			cond.L.Unlock()
 		}
 		return true
 	})

@@ -1,6 +1,9 @@
 package eventhub
 
 import (
+	"errors"
+	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -308,4 +311,212 @@ func BenchmarkSubscribe(b *testing.B) {
 func runCheckedTest(t *testing.T, fn func(t *testing.T)) {
 	defer goleak.VerifyNone(t)
 	fn(t)
+}
+
+func TestEventHubTableDistributeAutoCommit(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	// autoCommit:无订阅者时先写入历史,后续订阅可重复读取
+	if err := table.Distribute("k", 0, "v1"); err != nil {
+		t.Fatalf("distribute: %v", err)
+	}
+	if err := table.Distribute("k", 0, "v2"); err != nil {
+		t.Fatalf("distribute: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		got, err := table.Subscribe("k", 200*time.Millisecond)
+		if err != nil {
+			t.Fatalf("subscribe #%d: %v", i, err)
+		}
+		if got != "v2" {
+			t.Fatalf("subscribe #%d = %v, want v2", i, got)
+		}
+	}
+}
+
+func TestEventHubTableDistributeNoAutoCommit(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	err := table.Distribute("k", 0, "v", WithEventHubTableAutoCommit(false))
+	if !errors.Is(err, ErrEventHubNotSubscribed) {
+		t.Fatalf("err = %v, want ErrEventHubNotSubscribed", err)
+	}
+}
+
+func TestEventHubTableUnSubscribe(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	if _, err := table.Subscribe("k", 20*time.Millisecond); !errors.Is(err, ErrEventHubTimeout) {
+		t.Fatalf("err = %v, want ErrEventHubTimeout", err)
+	}
+
+	table.UnSubscribe("k")
+
+	// hub 已被移除:非 autoCommit 分发应报未订阅
+	err := table.Distribute("k", 0, "v", WithEventHubTableAutoCommit(false))
+	if !errors.Is(err, ErrEventHubNotSubscribed) {
+		t.Fatalf("err = %v, want ErrEventHubNotSubscribed", err)
+	}
+}
+
+func TestEventHubTableStop(t *testing.T) {
+	table := NewEventHubTable[string]()
+	_ = table.Distribute("k", 0, "v")
+	table.Stop()
+
+	if _, err := table.Subscribe("k", 10*time.Millisecond); !errors.Is(err, ErrEventHubTableClosed) {
+		t.Fatalf("subscribe after stop: err = %v, want ErrEventHubTableClosed", err)
+	}
+	if err := table.Distribute("k", 0, "v"); !errors.Is(err, ErrEventHubTableClosed) {
+		t.Fatalf("distribute after stop: err = %v, want ErrEventHubTableClosed", err)
+	}
+}
+
+func TestEventHubTableStopUnblocksSubscriber(t *testing.T) {
+	table := NewEventHubTable[string]()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := table.Subscribe("k", 5*time.Second)
+		done <- err
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	table.Stop()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrEventHubClosed) {
+			t.Fatalf("err = %v, want ErrEventHubClosed", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber was not woken up by table.Stop")
+	}
+}
+
+func TestEventHubTableConcurrentStop(t *testing.T) {
+	table := NewEventHubTable[string]()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			key := fmt.Sprintf("k%d", id)
+			for j := 0; j < 20; j++ {
+				_ = table.Distribute(key, 0, j)
+				_, _ = table.Subscribe(key, time.Millisecond)
+				if j%5 == 0 {
+					table.UnSubscribe(key)
+				}
+			}
+		}(i)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	table.Stop()
+	wg.Wait()
+
+	if _, err := table.Subscribe("k", time.Millisecond); !errors.Is(err, ErrEventHubTableClosed) {
+		t.Fatalf("subscribe after stop: err = %v, want ErrEventHubTableClosed", err)
+	}
+}
+
+func TestSubscribesEventWrapper(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	if err := table.Distribute("k", 0, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := table.Distribute("k", 0, "b"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SubscribesEventWrapper[string](table, "k", 200*time.Millisecond, 2, false)
+	if err != nil {
+		t.Fatalf("wrapper: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Fatalf("got %v, want [a b]", got)
+	}
+}
+
+// TestSubscribesSizeNonPositive 首次订阅 size<=0 不应 panic(回归:NewRing(0) 曾 panic
+// 且 panic 时持有 table.mu 导致后续 Stop 死锁)
+func TestSubscribesSizeNonPositive(t *testing.T) {
+	table := NewEventHubTable[string]()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Subscribes(size<=0) panicked: %v", r)
+		}
+	}()
+
+	_, err := table.Subscribes("k", 10*time.Millisecond, 0, false)
+	if !errors.Is(err, ErrEventHubTimeout) {
+		t.Fatalf("err = %v, want ErrEventHubTimeout", err)
+	}
+
+	// 锁应已被正常释放:Stop 需在超时前完成
+	stopped := make(chan struct{})
+	go func() {
+		table.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() hung: table mutex not released")
+	}
+}
+
+// TestSubscribesEventWrapperPartialTypeMismatch 部分返回时类型不匹配应返回错误
+// 而不是 panic(回归:recover 未覆盖错误分支)
+func TestSubscribesEventWrapperPartialTypeMismatch(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	if err := table.Distribute("k", 0, 42); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := SubscribesEventWrapper[string](table, "k", 10*time.Millisecond, 3, true)
+	if err == nil {
+		t.Fatal("expected conversion error, got nil")
+	}
+}
+
+// TestEventHubTableDistributeCapacityOption 分发时自定义容量生效,非法容量回退默认值
+func TestEventHubTableDistributeCapacityOption(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	if err := table.Distribute("k", 0, "v", WithEventHubCapacity(2)); err != nil {
+		t.Fatalf("distribute: %v", err)
+	}
+	if hub := table.subscriptions["k"]; hub == nil || hub.capacity != 2 {
+		t.Fatalf("hub = %v, want capacity 2", hub)
+	}
+
+	if err := table.Distribute("k2", 0, "v", WithEventHubCapacity(0)); err != nil {
+		t.Fatalf("distribute: %v", err)
+	}
+	if got := table.subscriptions["k2"].capacity; got != defaultEventChanSize {
+		t.Fatalf("invalid capacity fallback = %d, want %d", got, defaultEventChanSize)
+	}
+}
+
+// TestEventHubTableSubscribeWithZeroSize 变长参 size=0 经 acquireHub 创建合法容量,不 panic
+func TestEventHubTableSubscribeWithZeroSize(t *testing.T) {
+	table := NewEventHubTable[string]()
+	defer table.Stop()
+
+	if _, err := table.Subscribe("k", 20*time.Millisecond, 0); !errors.Is(err, ErrEventHubTimeout) {
+		t.Fatalf("err = %v, want ErrEventHubTimeout", err)
+	}
 }

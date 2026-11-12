@@ -66,12 +66,12 @@ func (r *Ring) Take(n ...int) []any {
 			elements[i] = r.elements[(start+i)%rlen]
 		}
 	default:
-		for j, i := 0, size-1; j < num; i-- {
+		j := 0
+		for i := num - 1; i >= 0; i-- {
 			elements[j] = r.elements[(start+i)%rlen]
 			j++
 		}
 	}
-
 	return elements
 }
 
@@ -96,4 +96,25 @@ func (r *Ring) Len() int {
 	}
 
 	return size
+}
+
+// ForEachNewest 从最新一条开始向旧遍历,fn 返回 false 时提前终止;
+// 相比 Take 的全量复制,遍历到满足条件即可停,复制量与终止位置相关。
+// 注意:回调在持有 ring 锁的状态下执行,不得在回调中调用 Ring 自身的加锁方法。
+func (r *Ring) ForEachNewest(fn func(v any) bool) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	rlen := len(r.elements)
+	size, start := 0, 0
+	if r.index > rlen {
+		size, start = rlen, r.index%rlen
+	} else {
+		size = r.index
+	}
+	for i := 0; i < size; i++ {
+		if !fn(r.elements[(start+size-1-i)%rlen]) {
+			return
+		}
+	}
 }

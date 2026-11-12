@@ -34,17 +34,21 @@ func (table *EventHubTable[T]) SubscribeWithContext(ctx context.Context, name T,
 	return hub.SubscribeWithContext(ctx, timeout)
 }
 
-func (table *EventHubTable[T]) Subscribes(name T, timeout time.Duration, size int) ([]any, error) {
-	return table.SubscribesWithContext(context.Background(), name, timeout, size)
+func (table *EventHubTable[T]) Subscribes(name T, timeout time.Duration, size int,
+	returnPartial ...bool) ([]any, error) {
+	partial := len(returnPartial) > 0 && returnPartial[0]
+	return table.SubscribesWithContext(context.Background(), name, timeout, size, partial)
 }
 
-func (table *EventHubTable[T]) SubscribesWithContext(ctx context.Context, name T, timeout time.Duration, size int) ([]any, error) {
+func (table *EventHubTable[T]) SubscribesWithContext(ctx context.Context, name T, timeout time.Duration, size int,
+	returnPartial ...bool) ([]any, error) {
 	hub, err := table.acquireHub(name, size)
 	if err != nil {
 		return nil, err
 	}
 
-	return hub.SubscribesWithContext(ctx, timeout, size)
+	partial := len(returnPartial) > 0 && returnPartial[0]
+	return hub.SubscribesWithContext(ctx, timeout, size, partial)
 }
 
 func (table *EventHubTable[T]) acquireHub(name T, size ...int) (*EventHub, error) {
@@ -60,6 +64,11 @@ func (table *EventHubTable[T]) acquireHub(name T, size ...int) (*EventHub, error
 		table.mu.Lock()
 		hub, ok = table.subscriptions[name]
 		if !ok {
+			if table.closed() {
+				// Stop 可能发生在锁外 closed() 检查之后,复查以避免向已关闭 table 写入孤儿 hub
+				table.mu.Unlock()
+				return nil, ErrEventHubTableClosed
+			}
 			hub = NewEventHub(size...)
 			table.subscriptions[name] = hub
 		}
@@ -84,12 +93,12 @@ func (table *EventHubTable[T]) UnSubscribe(name T) {
 
 func (table *EventHubTable[T]) Distribute(name T, life time.Duration, data any,
 	opts ...eventHubTableOption) error {
+	table.mu.Lock()
+	defer table.mu.Unlock()
 	if table.closed() {
 		return ErrEventHubTableClosed
 	}
 
-	table.mu.Lock()
-	defer table.mu.Unlock()
 	hub, ok := table.subscriptions[name]
 	if ok {
 		return hub.Publish(data, life)

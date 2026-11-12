@@ -43,5 +43,5 @@ func ExampleEventHubTable_Subscribes() {
 	res, err := table.Subscribes(eventName, time.Millisecond*100, 3)
 	fmt.Println(res, err)
 	// Output:
-	// [4 3 2] <nil>
+	// [2 3 4] <nil>
 }
