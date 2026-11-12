@@ -9,7 +9,7 @@
 
 </div>
 
-`eventhub` is a stand-alone version of the event subscription component that can accept multiple or one results, and supports timeouts and contexts.
+A concurrency-safe in-process event hub for Go: ring-buffer history with TTL expiry and repeatable reads, pub/sub with zero dependencies.
 
 ## Install
 ```console
